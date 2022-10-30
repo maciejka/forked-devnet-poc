@@ -1,3 +1,4 @@
+from asyncio import exceptions
 import copy
 from typing import List, Optional, Union
 
@@ -23,6 +24,9 @@ from starkware.starknet.business_logic.state.state_api_objects import BlockInfo
 from starkware.starkware_utils.commitment_tree.patricia_tree.patricia_tree import PatriciaTree
 from starkware.starknet.services.api.feeder_gateway.feeder_gateway_client import FeederGatewayClient
 from services.external_api.client import RetryConfig
+from starkware.starkware_utils.error_handling import StarkException
+
+import traceback
 
 class ForkedStarknet(Starknet):
     """
@@ -71,12 +75,20 @@ class ForkedStarknet(Starknet):
     async def get_contract_at(self, contract_address: int) -> StarknetContract:
         class_hash  = await self.state.state.get_class_hash_at(contract_address)
         contract_class = await self.state.state.get_contract_class(class_hash)
+
+        # TODO: is it necessary?
+        # await self.state.set_contract_class(
+        #     class_hash=class_hash, contract_class=contract_class
+        # )
+
         return StarknetContract(
             state=self.state,
             abi=get_abi(contract_class=contract_class),
             contract_address=contract_address,
             deploy_call_info=None #deploy_call_info,
         )
+
+EMPTY_HASH = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
 
 class LoggingPatriciaStateReader(PatriciaStateReader):
     def __init__(self, global_state_root: PatriciaTree, ffc: FactFetchingContext, fgc: FeederGatewayClient):
@@ -92,17 +104,28 @@ class LoggingPatriciaStateReader(PatriciaStateReader):
         # return await super().get_contract_class(class_hash)
 
     async def get_class_hash_at(self, contract_address: int) -> bytes:
-        # return await super().get_class_hash_at(contract_address)
-        raw = await self.fgc.get_class_hash_at(contract_address)
-        # convert
-        print("\nget_class_hash_at({})->{}".format(contract_address, raw))
-        return raw.encode()
+        local_hash = await super().get_class_hash_at(contract_address)
+
+        if local_hash != EMPTY_HASH:
+            print("\nget_class_hash_at({})->{}".format(contract_address, local_hash.decode()))
+            return local_hash
+
+        try:
+            class_hash = (await self.fgc.get_class_hash_at(contract_address)).encode()
+        except Exception as exception:
+            # TODO: how to handle StarknetErrorCode.UNINITIALIZED_CONTRACT correctly?
+            class_hash = EMPTY_HASH
+
+        print("\nget_class_hash_at({})->{}".format(contract_address, class_hash.decode()))
+        return class_hash
+
 
     async def get_nonce_at(self, contract_address: int) -> int:
         print("\nget_nonce_at({})".format(contract_address))
         return await super().get_nonce_at(contract_address)
 
     async def get_storage_at(self, contract_address: int, key: int) -> int:
+        # traceback.print_stack()
         # r = await super().get_storage_at(contract_address, key)
         raw = await self.fgc.get_storage_at(contract_address, key)
         print("\nget_storage_at({}, {})->{}".format(contract_address, key, raw))
