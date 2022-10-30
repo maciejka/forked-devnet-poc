@@ -20,11 +20,13 @@ def to_uint(a):
 # The testing library uses python's asyncio. So the following
 # decorator and the ``async`` keyword are needed.
 @pytest.mark.asyncio
-async def test_increase_balance():
-    """Test increase_balance method."""
-    # Create a new Starknet class that simulates the StarkNet
-    # system.
-    starknet = await ForkedStarknet.empty()
+async def test_forked_starknet():
+
+
+    feeder_gateway_url='https://alpha4.starknet.io/feeder_gateway/'
+    # feeder_gateway_url='https://alpha-mainnet.starknet.io/feeder_gateway/'
+
+    starknet = await ForkedStarknet.empty(feeder_gateway_url=feeder_gateway_url)
 
     user_address = 0x063c94d6B73eA2284338f464f86F33E12642149F763Cd8E76E035E8E6A5Bb0e6
     dai_address = 0x03e85bfbb8e2a42b7bead9e88e9a1b19dbccf661471061807292120462396ec9

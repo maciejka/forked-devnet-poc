@@ -25,8 +25,13 @@ from starkware.starkware_utils.commitment_tree.patricia_tree.patricia_tree impor
 from starkware.starknet.services.api.feeder_gateway.feeder_gateway_client import FeederGatewayClient
 from services.external_api.client import RetryConfig
 from starkware.starkware_utils.error_handling import StarkException
+from starkware.starknet.services.api.feeder_gateway.response_objects import (
+    BlockIdentifier,
+)
 
 import traceback
+
+CastableToHash = Union[int, str]
 
 class ForkedStarknet(Starknet):
     """
@@ -41,7 +46,13 @@ class ForkedStarknet(Starknet):
     #     super().__init__(state)
 
     @classmethod
-    async def empty(cls, general_config: Optional[StarknetGeneralConfig] = None) -> "ForkedStarknet":
+    async def empty(
+        cls,
+        general_config: Optional[StarknetGeneralConfig] = None,
+        feeder_gateway_url='https://alpha4.starknet.io/feeder_gateway/',
+        block_hash: Optional[CastableToHash] = None,
+        block_number: Optional[BlockIdentifier] = None,
+    ) -> "ForkedStarknet":
 
         """
         Creates a new StarknetState instance.
@@ -52,14 +63,15 @@ class ForkedStarknet(Starknet):
         ffc = FactFetchingContext(storage=DictStorage(), hash_func=pedersen_hash_func)
         empty_shared_state = await SharedState.empty(ffc=ffc, general_config=general_config)
 
-        feeder_gateway_url='https://alpha4.starknet.io/feeder_gateway/'
-        # feeder_gateway_url='https://alpha-mainnet.starknet.io/feeder_gateway/'
-
         retry_config = RetryConfig(n_retries=1)
         fgc = FeederGatewayClient(url=feeder_gateway_url, retry_config=retry_config)
 
         state_reader = LoggingPatriciaStateReader(
-            global_state_root=empty_shared_state.contract_states, ffc=ffc, fgc=fgc
+            global_state_root=empty_shared_state.contract_states,
+            ffc=ffc,
+            fgc=fgc,
+            block_number=block_number,
+            block_hash=block_hash
         )
 
         state = CachedState(
@@ -91,9 +103,18 @@ class ForkedStarknet(Starknet):
 EMPTY_HASH = b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
 
 class LoggingPatriciaStateReader(PatriciaStateReader):
-    def __init__(self, global_state_root: PatriciaTree, ffc: FactFetchingContext, fgc: FeederGatewayClient):
+    def __init__(
+        self,
+        global_state_root: PatriciaTree,
+        ffc: FactFetchingContext,
+        fgc: FeederGatewayClient,
+        block_hash: Optional[CastableToHash] = None,
+        block_number: Optional[BlockIdentifier] = None,
+    ):
         super().__init__(global_state_root, ffc)
         self.fgc = fgc
+        self.block_hash = block_hash
+        self.block_number = block_number
 
     async def get_contract_class(self, class_hash: bytes) -> ContractClass:
         # r = await super().get_contract_class(class_hash)
@@ -111,7 +132,13 @@ class LoggingPatriciaStateReader(PatriciaStateReader):
             return local_hash
 
         try:
-            class_hash = (await self.fgc.get_class_hash_at(contract_address)).encode()
+            class_hash = (
+                await self.fgc.get_class_hash_at(
+                    contract_address,
+                    block_hash=self.block_hash,
+                    block_number=self.block_number,
+                )
+            ).encode()
         except Exception as exception:
             # TODO: how to handle StarknetErrorCode.UNINITIALIZED_CONTRACT correctly?
             class_hash = EMPTY_HASH
@@ -127,6 +154,10 @@ class LoggingPatriciaStateReader(PatriciaStateReader):
     async def get_storage_at(self, contract_address: int, key: int) -> int:
         # traceback.print_stack()
         # r = await super().get_storage_at(contract_address, key)
-        raw = await self.fgc.get_storage_at(contract_address, key)
+        raw = await self.fgc.get_storage_at(
+            contract_address, key,
+            block_hash=self.block_hash,
+            block_number=self.block_number,
+        )
         print("\nget_storage_at({}, {})->{}".format(contract_address, key, raw))
         return int(raw, base=16)
